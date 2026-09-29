@@ -23,6 +23,14 @@ description: |
 
 ## 核心不变量（不要修改）
 
+### 汇总表的人工复核信息
+
+- 每位候选人必须在汇总表显示 BOSS 卡片位置、位置核对时间、匹配证据（highlights）和缺口与待核实项（concerns）；不得只把证据放在详情卡片。
+- 报告生成时仅通过现有本机 CDP 读取同一岗位推荐页 DOM，按 geek_id 关联卡片位置；不导航、不刷新、不登录、不发送消息。快照仅保存ID、位置、时间及岗位/run标识到当前run的 `process/candidate_positions.json`。
+- 没有对应页面时允许离线生成；同run旧快照必须标注“历史快照”，没有可靠匹配则显示“未核实页面位置”。当前已加载列表未找到时不得使用旧位置。
+- `recommend_geek_ids.json` 的数组序号只标为“采集文件内序号”，不得充当 BOSS 页面位置；位置匹配禁止按姓名回退。
+- 保留完整证据和缺口条目，HTML转义，宽表允许横向滚动。年龄不参与评分，评分公式不变。
+
 | 项 | 值 |
 |----|----|
 | 输入文件 | `screening_results.json`（由 score_resumes.py 产出） |
@@ -142,7 +150,7 @@ preview_url 在 IDE 内置浏览器打开
       "tier": "待定",
       "total": 69.8,
       "dimensions": [
-        {"pct": 62, "weighted": 15.5, "weight": 25, "reason": "二本公办（school_tier 查询：辽宁工业大学）"},
+        {"pct": 62, "weighted": 9.3, "weight": 15, "reason": "二本公办（匹配：辽宁工业大学；项目内置国内院校分档表）"},
         {"pct": 80, "weighted": 24.0, "weight": 30, "reason": "..."}
       ]
     }
@@ -159,8 +167,8 @@ preview_url 在 IDE 内置浏览器打开
 | `meta.type_judgment.{type,reason}` | 元信息栏（岗位类型） |
 | `meta.core_requirements` | 核心要求列表 |
 | `dimension_labels` | 进度条维度名（默认 ["学历","工作经验","专业技能","项目经历","专业匹配"]） |
+| `candidates[].age` / `degree` / `work_years` | 排名汇总表与候选人卡片；优先从当前 run 的原始简历按 `geek_id` 补齐，旧数据仅在姓名唯一时回退匹配，缺失显示“未提供” |
 | `candidates[].school` | 候选人卡片学校 |
-| `candidates[].work_years` | 候选人卡片工作年限 |
 | `candidates[].current_role` | 候选人卡片当前岗位 |
 | `candidates[].hard_pass` / `hard_reason` | 硬门槛标签（一般不出现） |
 | `candidates[].dimensions[].reason` | 评分依据列表 |
@@ -178,8 +186,8 @@ preview_url 在 IDE 内置浏览器打开
 
 1. **Header** — 渐变色（`#1a1a2e → #16213e → #0f3460`），标题 + subtitle + meta-grid（岗位名称/薪资/地点/候选人总数）
 2. **筛选总览** — 4 张 stat-card（蓝/绿/黄/红），分别显示总数/推荐/待定/不推荐
-3. **排名表格** — 5 维度列（学历 25% / 经验 30% / 技能 25% / 项目 15% / 专业 5%）
-4. **候选人详情** — 每候选人一张卡片：基础信息 + 5 维度进度条 + 评分依据列表 + 亮点/顾虑
+3. **排名表格** — 年龄、学历、工作经验与 5 维度加权分并列展示
+4. **候选人详情** — 每候选人一张卡片：年龄、学历、工作经验、学校与岗位 + 5 维度进度条 + 评分依据列表 + 亮点/顾虑
 5. **行动建议** — 三段式（✅ 推荐 / 📌 待沟通 / ❌ 不推荐），每段按 actions 字段渲染
 
 ### 配色规则

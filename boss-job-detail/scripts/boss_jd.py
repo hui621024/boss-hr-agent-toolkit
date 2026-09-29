@@ -46,8 +46,8 @@ def fetch_jd(encrypt_job_id):
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(CDP_URL)
 
-        pages = browser.contexts[0].pages if browser.contexts else []
-        page = pages[0] if pages else browser.contexts[0].new_page()
+        # JD 使用临时标签页，保留招聘者当前推荐页的岗位与筛选条件。
+        page = browser.contexts[0].new_page()
 
         target = f"https://www.zhipin.com/web/chat/job/edit?encryptId={encrypt_job_id}&jobCreateSource=0&enterSource=6"
         # BOSS 该页是 iframe + 长轮询（IM 心跳），networkidle 常等不到 → 只等 DOM ready
@@ -92,6 +92,7 @@ def fetch_jd(encrypt_job_id):
         if not body_text:
             body_text = page.evaluate("document.body.innerText")
 
+        page.close()
         browser.close()
         return {"bodyText": body_text, "formValues": form_vals}
 

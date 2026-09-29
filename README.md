@@ -1,13 +1,15 @@
 # BOSS 直聘 · HR 智能体技能包
 
 > [!NOTE]
-> 由 **7 个 AI 智能体 Skill** 组成，基于 patchright + CDP 直连真实 Edge 浏览器（共享 wt2/zp_at/bst cookie），实现 BOSS 直聘简历筛选的**全流程自动化**：从岗位到可视化报告，一键搞定。
+> 由 **7 个 AI 智能体 Skill** 组成，基于 patchright + CDP 直连真实 Edge 浏览器（共享 wt2/zp_at/bst cookie），提供从岗位解析、在线简历读取、评分到可视化报告的可追溯工作流；候选池确认和语义评分由用户 / Agent 协作完成。
 >
 > **统一入口 CLI `boss-hr`**：所有 Agent / 用户通过 [`boss-hr` 命令](docs/CLI_WORKFLOW.md)（`boss-hr start / confirm / fetch / score / report / greet / status`）调用本工具包。**禁止直接调用底层脚本**。详见 [`boss-hr-auto/SKILL.md`](boss-hr-auto/SKILL.md)。
 >
 > **自包含**：不依赖第三方 BOSS CLI。所有 BOSS HTTP 调用走浏览器内 fetch（自动带 cookie + TLS 指纹），岗位查询走 `shared/recruiter_job_catalog.py`，登录检测走 `shared/cdp_preflight.py`。
 >
 > **当前发布形态**：**GitHub 源码工具包 + editable install**（`pip install -e .`）。**不是**独立 wheel，**不**依赖移动源码后仍能运行。移动源码后必须重新 `pip install -e .` 才能继续使用 `boss-hr` 命令。
+>
+> **运行形态**：这是 Python CLI + 专用 Edge CDP 工具，**不需要 Docker**，也没有常驻本地后台或管理网页。HTML 仅是生成后的静态筛选报告。
 
 <p align="center">
   <img alt="skills" src="https://img.shields.io/badge/skills-7%20agents-blue">
@@ -24,6 +26,7 @@
 - [🎯 核心能力](#-核心能力)
 - [🧩 技能一览与工作流](#-技能一览与工作流)
 - [🚀 快速开始](#-快速开始-cli-工作流)
+- [📘 Windows 操作说明](docs/USER_GUIDE_ZH.md)
 - [🧠 评分系统](#-评分系统)
 - [🛡️ 安全与风控](#️-安全与风控)
 - [📂 项目结构](#-项目结构)
@@ -35,23 +38,35 @@
 
 ## 🚀 快速开始（CLI 工作流）
 
-**前置**：Windows + Python 3.10+ + Edge 浏览器 + `pip install -e .` 安装本工具包。
+**前置**：Windows + Python 3.10+ + Edge 浏览器。
 
-> **v1.1.2 自动恢复**：**不需要**预先手动启动 Edge，也**不需要**预先跑
+### Windows 一键安装与启动
+
+```powershell
+cd D:\project\boss-hr-agent-toolkit
+.\install-windows.bat
+.\start-windows.bat
+```
+
+- `install-windows.bat` 执行 editable install 并验证统一 CLI。
+- `start-windows.bat` 检查环境、启动或复用专用 Edge，并打开 BOSS 招聘者页面；输出默认存入项目内的 `boss-hr-output/`。不带岗位参数时不会创建 run、读取简历或发送招呼。
+- 要直接创建岗位 run，可执行 `.\start-windows.ps1 -Query "AI应用工程师"`；成功后会停在人工确认门，不会自动继续抓取或发送消息。
+- 完整安装、登录、只读筛选、状态说明和故障排查见 [Windows 操作说明](docs/USER_GUIDE_ZH.md)。
+
+> **v1.1.3 自动恢复**：**不需要**预先手动启动 Edge，也**不需要**预先跑
 > `boss-hr doctor`。直接 `boss-hr start` 即可：
 >
 > - 9222 已开 + 已登录 → 立即进入业务；
 > - 9222 未开 → 自动启动**专用** Edge
 >   （`%LOCALAPPDATA%\boss-hr-edge-profile` + `--remote-debugging-port=9222`，
 >   **不**污染日常 Edge profile）；
-> - 自动启动后未登录 → 自动打开 BOSS 招聘者登录页，轮询等待（默认 20s）；
-> - 超时未登录 → 返回 `status=waiting_user_login`（**不是错误**），
->   `next_action=retry_same_command`，**不创建 run**；
+> - 自动启动后未登录 → 自动打开 BOSS 招聘者登录页并立即返回；
+> - 返回 `status=waiting_user_login`（**不是错误**），**不创建 run**；
 > - 用户在专用 Edge 窗口内登录后，**重试同一条 start** 即可继续。
 >
 > `boss-hr doctor` 仍是独立诊断工具，但**不再是 start 的必经前置**。
 
-```bash
+```powershell
 git clone https://github.com/<owner>/boss-hr-agent-toolkit
 cd boss-hr-agent-toolkit
 python -m pip install -e .
@@ -63,10 +78,9 @@ python -m boss_hr --help # 等价入口
 
 完整 8 命令工作流（详见 [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md)）：
 
-```bash
-# 1. 直接创建新 run（停在人工确认门；v1.1.2 自动启动 Edge + 等登录）
-boss-hr start "<encryptJobId|jobId|岗位名>" \
-  --job-name "<岗位名>" --encrypt-job-id "<id>"
+```powershell
+# 1. 直接创建新 run（停在人工确认门；v1.1.3 自动启动 Edge，未登录时立即返回提示）
+boss-hr start "<encryptJobId|jobId|岗位名>" --job-name "<岗位名>" --encrypt-job-id "<id>"
 # → status=waiting_user_confirmation，run_id=...
 # → 智能体停下，告知用户在 BOSS 推荐牛人页面调整筛选条件
 # 若 start 返回 status=waiting_user_login：智能体停下，告知用户在专用
@@ -77,12 +91,12 @@ boss-hr start "<encryptJobId|jobId|岗位名>" \
 boss-hr confirm --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 boss-hr fetch   --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>" --count N
 
-# 3. score 循环（LLM 评一位 → 再调一次相同 score → scoring_complete）
+# 3. score 循环（每轮评一位；逐位重复直到 scoring_complete）
 boss-hr score   --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 # → 读返回的 input_file、按 resume-screener/SKILL.md 评 4 维度（不评 edu）、
-#   写 output_file、再调一次相同的 score
+#   写 output_file、再调一次相同的 score；若仍是 waiting_llm，继续下一位
 boss-hr score   --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
-# → status=scoring_complete
+# → 全部候选人处理完后 status=scoring_complete
 
 # 4. report
 boss-hr report  --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
@@ -96,6 +110,7 @@ boss-hr status  --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 
 > ⚠️ **当前限制（GitHub 首版）**：
 > - 不支持 `continue` / `batch` / 多批累计
+> - `fetch` 目前只读取“推荐牛人”的在线完整简历；尚未接入附件简历或“主动发起沟通 / 新招呼”候选人列表
 > - 真实 `greet` 成功点击（≥70 分候选人实际点击发送）尚未完成受控验证
 > - 仅在 Windows 上完整验证过；macOS / Linux 需自测
 
@@ -106,11 +121,12 @@ boss-hr status  --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 你有一个岗位，剩下的交给 AI：
 
 ```
-   岗位          →   AI 自动提取 JD   →   自动下载候选人简历   →   自动评分排名   →   自动打招呼 + 可视化报告
-(一句话需求)        (boss-job-detail)      (boss-recommend-downloader)    (resume-screener)     (boss-hr-greet + html-report)
+   岗位          →   AI 自动提取 JD   →   自动下载候选人简历   →   自动评分排名   →   可视化报告
+(一句话需求)        (boss-job-detail)      (boss-recommend-downloader)    (resume-screener)     (html-report)
+                                                                                         └→ 可选显式打招呼
 ```
 
-**一句话概括：** AI 帮你在几十份简历中，几分钟内筛出最匹配的那几个，自动给高分候选人打招呼，并告诉你该和每个人聊什么。
+**一句话概括：** AI 帮你在几十份简历中筛出更匹配的候选人，生成可复核的评分报告；只有明确执行 `greet` 时才会给候选人打招呼。
 
 ---
 
@@ -121,7 +137,7 @@ boss-hr status  --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 | 🔍 **JD 提取** | 一键抓取岗位详情、任职要求与核心技能点 |
 | 📥 **简历获取** | 从推荐牛人页面获取完整简历，真实浏览器指纹，低风控 |
 | 🧮 **智能评分** | 5 维度加权评分 + 学历分档校准，硬门槛过滤 |
-| 📬 **自动打招呼** | 给 ≥70 分的推荐 tier 候选人自动点 BOSS 打招呼按钮 |
+| 📬 **可选打招呼** | 只有用户明确批准并执行 `greet` 时，才给 ≥70 分的推荐 tier 候选人点击打招呼 |
 | 📊 **可视化报告** | 排名表 + 五维雷达图 + 个性化沟通建议，HTML 一键生成 |
 | 🧪 **可测试** | 核心算法由 `tests/` 单元测试用例覆盖 |
 
@@ -140,7 +156,7 @@ boss-hr status  --job-name "<>" --encrypt-job-id "<>" --run-id "<rid>"
 | 3 | **boss-recommend-downloader** | Step 2 | 从推荐牛人页面获取完整简历（含 run_all 一把梭） |
 | 4 | resume-screener | Step 3 | 硬门槛过滤 + 加权评分 + 学历分档 |
 | 5 | html-report | Step 4 | 生成可视化 HTML 报告 + 沟通建议 |
-| 5+ | **boss-hr-greet** | Step 5 | 给高分候选人自动打招呼（主流程自动触发） |
+| 5+ | **boss-hr-greet** | 可选 Step 5 | 用户明确批准后，给高分候选人打招呼 |
 | lib | shared/cdp_preflight | 基础 | CDP 连接 + 登录态探测 |
 | lib | shared/recruiter_job_catalog | 基础 | 招聘者岗位列表 + encryptJobId 解析 |
 
@@ -152,7 +168,7 @@ flowchart LR
     B --> C[boss-recommend-downloader<br/>推荐牛人列表 + 在线简历]
     C --> D[resume-screener<br/>LLM 评分 + 公式重算]
     D --> E[html-report<br/>可视化报告]
-    D --> F[boss-hr-greet<br/>≥70 自动打招呼]
+    D -.->|用户明确批准| F[boss-hr-greet<br/>≥70 可选打招呼]
     B -.->|查询岗位| G[(shared/recruiter_job_catalog<br/>BOSS 后端 API)]
     B -.->|登录自检| H[(shared/cdp_preflight<br/>zp_at/wt2/bst cookie)]
     G -.->|浏览器内 fetch| I[Edge CDP 9222]
@@ -179,12 +195,23 @@ Edge 9222 端口（共享同一份 wt2/zp_at/bst cookie）。
 
 ### 1. 安装
 
-```bash
-# Python 依赖（patchright 是唯一第三方依赖）
-pip install patchright
+```powershell
+# 推荐：安装依赖、editable install 并验证 boss-hr
+.\install-windows.bat
+
+# 等价的手动安装
+python -m pip install -e .
 ```
 
-### 2. 启动 CDP 浏览器（v1.1.2 通常由 start 自动启动）
+### 2. 启动 CDP 浏览器
+
+Windows 用户可直接运行：
+
+```powershell
+.\start-windows.bat
+```
+
+它会启动或复用专用 Edge 并打开 BOSS 招聘者页面。详细参数见 [Windows 操作说明](docs/USER_GUIDE_ZH.md)。
 
 **正常流程无需手动启动**：`boss-hr start` 会自动启动专用 Edge
 （`%LOCALAPPDATA%\boss-hr-edge-profile` + `--remote-debugging-port=9222`），
@@ -212,16 +239,12 @@ google-chrome \
 
 在打开的 Edge 窗口里**人工扫码登录 BOSS 招聘者**，登录态会被 9222 端口的浏览器 session 持有。
 
-v1.1.2 默认行为：start / fetch / greet 都会自动在专用 Edge 中打开 BOSS
-登录页，等待用户登录后继续。`boss-hr doctor` 也支持 `--launch-edge`
-手动启动专用 Edge。
+v1.1.3 默认行为：start / fetch / greet 都会在需要时启动专用 Edge，并在未登录时打开 BOSS 登录页。`start` 默认立即返回 `waiting_user_login`；登录后重跑同一命令即可。`boss-hr doctor` 也支持 `--launch-edge` 手动启动专用 Edge。
 
-验证脚本会自动检查 `zp_at` / `wt2` / `bst` 三 cookie 是否齐全，无须手动命令。可以用 shared 模块快速自检：
+验证逻辑会检查 `zp_at` / `wt2` / `bst` 三个 Cookie 是否齐全。普通用户应使用统一 CLI 自检：
 
-```python
-from shared.cdp_preflight import connect_cdp, check_login
-session = connect_cdp()        # 默认连 http://localhost:9222
-print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...}
+```powershell
+python -X utf8 -m boss_hr doctor
 ```
 
 ### 4. 开始使用
@@ -238,6 +261,12 @@ print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...
 帮我筛选车架工程师的简历
 ```
 
+只读筛选可明确说：
+
+```text
+筛选 AI应用工程师，只读取 10 份在线完整简历，生成报告，不发送招呼。
+```
+
 ---
 
 ## 🧠 评分系统
@@ -249,8 +278,8 @@ print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...
 
 | 维度 | 权重 | 评分方法 |
 |------|:----:|---------|
-| 学历 (edu) | **25%** | `validate_score()` 用 `school_tier.py` 分档表**强制覆盖** LLM 给的 edu 分；硕士 +8% |
-| 工作经验 (exp) | **25%** | 相关经验年限 + 业务匹配度 |
+| 学历 (edu) | **15%** | `validate_score()` 用国内院校分档和热门海外院校排名快照**强制覆盖** LLM 给的 edu 分 |
+| 工作经验 (exp) | **35%** | 相关经验年限 + 业务匹配度 |
 | 专业技能 (skill) | **25%** | JD 技能覆盖率 |
 | 项目经历 (proj) | **15%** | 项目复杂度 + 相关性 |
 | 专业匹配 (major) | **10%** | 对口=100%，相关=80%，无关=30-60% |
@@ -277,6 +306,14 @@ print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...
 > [!IMPORTANT]
 > 学历评分必须严格执行分档表，**禁止给所有人相同分数**。
 
+### 海外院校评分
+
+- 后端内置中国求职者较常见的海外院校及别名，数据快照日期为 **2026-09-29**。
+- 以 QS 2027 为主，THE 2026、ARWU 2026 为补充；按世界排名区间映射到国内院校分档的对应分数。
+- QS 1–30 / 31–100 / 101–300 / 301–500 / 501–800 / 801–1500 分别映射为 100 / 92 / 85 / 77 / 71 / 62 分；经核验但未入榜的私立院校按 53 分。
+- 学校名称只做规范化后的精确别名匹配；未命中暂按 60 分并标记人工复核，避免相似名称误判。
+- 逻辑位于 `resume-screener/scripts/overseas_school_data.py` 和 `school_tier.py`。本次改动只影响后端学历评分，不改变报告版式。
+
 ### 行动建议规则
 
 输出格式：`📊 排名表（含 5 维加权分）+ 📋 每人评分依据 + 🎯 个性化行动建议`
@@ -301,7 +338,7 @@ print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...
 
 ### 通用规则
 
-- ❌ 不自动发消息（CLI 权限不足）
+- ✅ 默认只读流程不执行 `greet`；只有用户明确批准并显式运行 `boss-hr greet` 才会发送招呼
 - ✅ 批量操作间隔随机延迟
 - ✅ 增量同步（已下载简历自动跳过）
 - ✅ Cookie 优先从浏览器本地提取
@@ -322,8 +359,14 @@ print(check_login(session))    # {'logged_in': True/False, 'cookies': {...}, ...
 ```
 boss-hr-agent-toolkit/
 ├── README.md                          # 本文件
+├── install-windows.bat                # Windows editable install
+├── start-windows.bat                  # Windows 双击启动入口
+├── start-windows.ps1                  # 环境检查、专用 Edge 与可选岗位启动
 ├── FILE_MANAGEMENT.md                 # 文件管理规范
 ├── .gitignore
+├── docs/
+│   ├── USER_GUIDE_ZH.md               # Windows 安装、启动与只读筛选说明
+│   └── CLI_WORKFLOW.md                 # 统一 CLI 状态机和开发者说明
 │
 ├── boss-hr-auto/                      # 🚪 全流程编排（唯一入口，纯文档）
 │   └── SKILL.md                        # 智能体按此文档顺序调用各子 Skill 脚本
@@ -343,14 +386,15 @@ boss-hr-agent-toolkit/
 │   ├── SKILL.md
 │   └── scripts/
 │       ├── score_resumes.py           # 加权评分 + 分档校准
-│       └── school_tier.py             # 学历分档表
+│       ├── school_tier.py             # 国内分档、别名归一化与统一查询
+│       └── overseas_school_data.py    # 热门海外院校与官方排名快照
 │
 ├── html-report/                       # Step 4：报告生成
 │   ├── SKILL.md
 │   ├── scripts/generate_html_report.py
 │   └── templates/report.html
 │
-├── boss-hr-greet/                     # Step 5：自动打招呼（主流程自动触发）
+├── boss-hr-greet/                     # 可选 Step 5：明确批准后打招呼
 │   ├── SKILL.md
 │   └── scripts/auto_greet.py          # 位置表 + 倒序招呼
 │

@@ -56,7 +56,7 @@
     "candidates": [
       {
         "rank", "name", "tier", "total",
-        "school", "work_years", "current_role",
+        "geek_id", "school", "age", "degree", "work_years", "current_role",
         "hard_pass", "hard_reason",
         "dimensions": [{"pct", "weighted", "weight", "reason"}],
         "highlights": [...],
@@ -88,9 +88,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from school_tier import lookup as school_lookup
 
-# === 5 维度权重（2026-07-21 调整：工作经验 30%→25%，专业匹配 5%→10%）===
-WEIGHTS = {"edu": 0.25, "exp": 0.25, "skill": 0.25, "proj": 0.15, "major": 0.10}
-WEIGHTS_PCT = {"edu": 25, "exp": 25, "skill": 25, "proj": 15, "major": 10}
+# === 5 维度权重（2026-09-29 用户调整：学历15%，工作经验35%）===
+WEIGHTS = {"edu": 0.15, "exp": 0.35, "skill": 0.25, "proj": 0.15, "major": 0.10}
+WEIGHTS_PCT = {key: round(value * 100) for key, value in WEIGHTS.items()}
 
 # === 维度中文标签（顺序与 WEIGHTS 一致，供报告展示）===
 DIM_LABELS = ["学历", "工作经验", "技能", "项目", "专业"]
@@ -162,15 +162,27 @@ def validate_score(score: dict) -> dict:
     school = _extract_school_name(score)
     if school:
         info = school_lookup(school)
+        score["school_tier_info"] = info
         if info["score"] is not None:
             score["dims"]["edu"] = info["score"]
-            score["dims_edu_reason"] = f"{info['tier']}（school_tier 查询：{school}）"
+            basis = (info.get("basis") or "项目内置院校分档表").strip()
+            matched = info.get("matched") or school
+            score["dims_edu_reason"] = (
+                f"{info['tier']}（匹配：{matched}；{basis}）"
+            )
         else:
             score["dims"]["edu"] = 60
-            score["dims_edu_reason"] = f"缺失（{school} 不在学校表，按60计）"
+            score["dims_edu_reason"] = (
+                f"缺失，待人工复核（{school} 未收录于国内分档或热门海外院校内置表，暂按60计）"
+            )
     else:
+        score["school_tier_info"] = {
+            "school": "", "tier": "未知", "score": None, "matched": None,
+            "fuzzy": False, "scope": "unknown", "basis": "未提供学校名",
+            "rankings": {}, "popular": False, "region": None,
+        }
         score["dims"]["edu"] = 60
-        score["dims_edu_reason"] = "缺失（无学校名，按60计）"
+        score["dims_edu_reason"] = "缺失，待人工复核（无学校名，暂按60计）"
 
     score["weighted"] = calc_weighted(score["dims"])
     score["total"] = calc_total(score["weighted"])
@@ -189,11 +201,15 @@ def candidate_to_report(c: dict, rank: int) -> dict:
     return {
         "rank": rank,
         "name": c["name"],
+        "geek_id": c.get("geek_id", ""),
         "tier": c["tier"],
         "total": c["total"],
         "hard_pass": c.get("hard_pass", True),
         "hard_reason": c.get("hard_reason"),
         "school": c.get("school", c.get("school_name", "")),
+        # 年龄和学历只从当前 run 的原始简历补齐，不采信 LLM 自填值。
+        "age": "",
+        "degree": "",
         "work_years": c.get("work_years", ""),
         "current_role": c.get("match_type", ""),
         "dimensions": [
@@ -275,6 +291,7 @@ def main():
     from output_manager import OUTPUT_ROOT, JobOutputManager, resolve_encrypt_job_id
     from run_orchestrator import RunOrchestrator
     from job_resume_store import JobResumeStore
+    from candidate_profile import enrich_candidate_profiles
     encrypt_job_id = resolve_encrypt_job_id(args.encrypt_job_id)
     if not encrypt_job_id:
         raise ValueError("缺少 encrypt_job_id。\n  传 --encrypt-job-id，或设置 env BOSS_HR_ENCRYPT_JOB_ID")
@@ -455,6 +472,7 @@ def main():
 
     # 转 candidates 格式
     candidates = [candidate_to_report(c, i + 1) for i, c in enumerate(data)]
+    enrich_candidate_profiles(candidates, out.process_dir)
     actions = build_actions(candidates)
 
     # 解析 job_info（可选）

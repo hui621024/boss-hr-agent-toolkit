@@ -21,7 +21,7 @@
     "candidates": [
       {
         "rank", "name", "tier", "total",
-        "school", "work_years", "current_role",
+        "school", "age", "degree", "work_years", "current_role",
         "hard_pass", "hard_reason",
         "dimensions": [{"pct", "weighted", "weight", "reason"}],
         "highlights": [str, ...],
@@ -41,6 +41,7 @@ import sys
 import io
 import argparse
 import datetime
+from html import escape
 from pathlib import Path
 
 # 注意：禁止在 import 时重写 sys.stdout（会导致被 import 的驱动脚本 print 报
@@ -80,7 +81,13 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; backgro
 .stat-card.red .num { color:#dc2626; }
 .stat-card.blue .num { color:#3b82f6; }
 .stat-card .label { font-size:13px; color:#6b7280; }
-table { width:100%; border-collapse:collapse; }
+.table-scroll { overflow-x:auto; }
+.review-cell { min-width:260px; max-width:420px; vertical-align:top; }
+.review-cell ul { padding-left:18px; font-size:13px; }
+.review-cell li { margin-bottom:5px; overflow-wrap:anywhere; }
+.position-cell { min-width:175px; vertical-align:top; }
+.position-cell small { display:block; color:#6b7280; font-size:11px; overflow-wrap:anywhere; }
+table { width:100%; min-width:1050px; border-collapse:collapse; }
 th { background:#f9fafb; padding:12px 10px; text-align:left; font-size:13px; color:#6b7280; font-weight:600; border-bottom:2px solid #e5e7eb; }
 td { padding:12px 10px; border-bottom:1px solid #f3f4f6; font-size:14px; }
 tr:hover { background:#f9fafb; }
@@ -151,6 +158,52 @@ def tier_badge(tier):
     }.get(tier, "")
 
 
+def profile_value(candidate: dict, field: str) -> str:
+    """报告基本信息；空字段明确标注，不猜测年龄或年限。"""
+    value = candidate.get(field)
+    text = str(value).strip() if value is not None else ""
+    return escape(text) if text else "未提供"
+
+
+def profile_meta(candidate: dict) -> str:
+    parts = [
+        f"<span>年龄：{profile_value(candidate, 'age')}</span>",
+        f"<span>学历：{profile_value(candidate, 'degree')}</span>",
+        f"<span>工作经验：{profile_value(candidate, 'work_years')}</span>",
+    ]
+    if candidate.get("school"):
+        parts.append(f"<span>学校：{profile_value(candidate, 'school')}</span>")
+    if candidate.get("current_role"):
+        parts.append(f"<span>当前岗位：{profile_value(candidate, 'current_role')}</span>")
+    return '<div class="meta">' + "".join(parts) + "</div>"
+
+
+def review_list(values) -> str:
+    """汇总直接复用评分证据，不截断或另行生成结论；转义简历文本。"""
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list) or not values:
+        return '未提供'
+    return '<ul>' + ''.join(f'<li>{escape(str(v))}</li>' for v in values) + '</ul>'
+
+
+def position_cell(candidate) -> str:
+    position = candidate.get('boss_position') or {}
+    if position.get('index') and position.get('checked_at'):
+        prefix = '历史快照' if position.get('historical') else '核对快照'
+        text = f"{prefix}：第{escape(str(position['index']))}张"
+        text += f"<small>核对时间：{escape(str(position['checked_at']))}</small>"
+    elif candidate.get('boss_position_status') == 'not_in_loaded_list':
+        text = '当前已加载列表未找到'
+    else:
+        text = '未核实页面位置'
+    if candidate.get('source_list_index'):
+        text += f"<small>采集文件内序号：{escape(str(candidate['source_list_index']))}（非页面位置）</small>"
+    if candidate.get('geek_id'):
+        text += f"<small>ID：{escape(str(candidate['geek_id']))}</small>"
+    return text
+
+
 # === 渲染函数 ===
 def render_candidate(c, labels, rank):
     if not c.get("hard_pass", True):
@@ -159,11 +212,12 @@ def render_candidate(c, labels, rank):
       <div class="card-header">
         <div class="card-title">
           <span class="rank">❌</span>
-          <h3>{c['name']}</h3>
+          <h3>{escape(str(c['name']))}</h3>
           {tier_badge('硬淘汰')}
         </div>
         <div class="total-score">—</div>
       </div>
+      {profile_meta(c)}
       <div class="reject-reason">🚫 {c.get('hard_reason', '未通过硬门槛')}</div>
     </div>"""
 
@@ -183,14 +237,14 @@ def render_candidate(c, labels, rank):
 
     custom_html = ""
     if c.get("highlights"):
-        items = "".join(f"<li>{h}</li>" for h in c["highlights"])
+        items = "".join(f"<li>{escape(str(h))}</li>" for h in c["highlights"])
         custom_html += f"""
         <div class="custom-section highlights">
           <div class="custom-label">✨ 亮点</div>
           <ul>{items}</ul>
         </div>"""
     if c.get("concerns"):
-        items = "".join(f"<li>{x}</li>" for x in c["concerns"])
+        items = "".join(f"<li>{escape(str(x))}</li>" for x in c["concerns"])
         custom_html += f"""
         <div class="custom-section concerns">
           <div class="custom-label">⚠ 顾虑</div>
@@ -202,15 +256,12 @@ def render_candidate(c, labels, rank):
       <div class="card-header">
         <div class="card-title">
           <span class="rank">#{rank}</span>
-          <h3>{c['name']}</h3>
+          <h3>{escape(str(c['name']))}</h3>
           {tier_badge(c.get('tier', ''))}
         </div>
         <div class="total-score">{c.get('total', 0):.2f}</div>
       </div>
-      <div class="meta">
-        <span>🎓 {c.get('school', '')}</span>
-        <span>💼 {c.get('work_years', '')} · {c.get('current_role', '')}</span>
-      </div>
+      {profile_meta(c)}
       <div class="dims">{dims_html}</div>
       {custom_html}
     </div>"""
@@ -237,12 +288,20 @@ def render(data: dict) -> str:
     # 排名表
     rank_rows = ""
     for c in candidates:
+        name = escape(str(c["name"]))
+        review_cells = (f'<td class="position-cell">{position_cell(c)}</td>'
+                        f'<td class="review-cell">{review_list(c.get("highlights"))}</td>'
+                        f'<td class="review-cell">{review_list(c.get("concerns") or ([c["hard_reason"]] if c.get("hard_reason") else []))}</td>')
+        profile_cells = "".join(
+            f"<td>{profile_value(c, field)}</td>"
+            for field in ("age", "degree", "work_years")
+        )
         if not c.get("hard_pass", True):
             empty_cells = "".join("<td>—</td>" for _ in labels)
-            rank_rows += f'<tr class="row-rejected"><td>❌</td><td>{c["name"]}</td><td>—</td>{empty_cells}<td>{tier_badge("硬淘汰")}</td></tr>'
+            rank_rows += f'<tr class="row-rejected"><td>❌</td><td>{name}</td>{review_cells}{profile_cells}<td>—</td>{empty_cells}<td>{tier_badge("硬淘汰")}</td></tr>'
         else:
             dim_cells = "".join(f"<td>{d.get('weighted', 0):.2f}</td>" for d in c.get("dimensions", []))
-            rank_rows += f'<tr><td class="rank">#{c.get("rank", "?")}</td><td><strong>{c["name"]}</strong></td><td class="total">{c.get("total", 0):.2f}</td>{dim_cells}<td>{tier_badge(c.get("tier", ""))}</td></tr>'
+            rank_rows += f'<tr><td class="rank">#{c.get("rank", "?")}</td><td><strong>{name}</strong></td>{review_cells}{profile_cells}<td class="total">{c.get("total", 0):.2f}</td>{dim_cells}<td>{tier_badge(c.get("tier", ""))}</td></tr>'
 
     cand_cards = "".join(render_candidate(c, labels, c.get("rank", i + 1)) for i, c in enumerate(candidates))
 
@@ -275,9 +334,14 @@ def render(data: dict) -> str:
 
     job = meta.get("job", {})
     type_judge = meta.get("type_judgment", {})
+    # 优先使用本份报告实际采用的权重，避免历史结果被贴上新权重标签。
+    weights = next(([d['weight'] for d in c.get('dimensions', [])]
+                    for c in candidates
+                    if len(c.get('dimensions', [])) == len(labels)
+                    and all('weight' in d for d in c['dimensions'])), [15, 35, 25, 15, 10])
     th_cells = "".join(
         f'<th>{labels[i]} {w}%</th>'
-        for i, w in enumerate([25, 25, 25, 15, 10][:len(labels)])
+        for i, w in enumerate(weights[:len(labels)])
     )
 
     return f"""<!DOCTYPE html>
@@ -324,17 +388,20 @@ def render(data: dict) -> str:
 </section>
 
 <section class="section">
-  <h2>🏆 候选人排名</h2>
+  <h2>🏆 候选人汇总与排名</h2>
+  <p>报告排名与BOSS卡片位置不同。位置按同一岗位已加载列表的候选人ID核对，仅在所示时间有效；刷新或换筛选后需重新核对。未核实的页面位置不会用采集序号代替。</p>
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
-        <th>排名</th><th>姓名</th><th>总分</th>
+        <th>报告排名</th><th>姓名</th><th>BOSS卡片位置</th><th>匹配证据</th><th>缺口与待核实项</th><th>年龄</th><th>学历</th><th>工作经验</th><th>总分</th>
         {th_cells}
         <th>建议</th>
       </tr>
     </thead>
     <tbody>{rank_rows}</tbody>
   </table>
+  </div>
 </section>
 
 <section class="section">
@@ -370,6 +437,8 @@ def main():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
     from output_manager import JobOutputManager, resolve_encrypt_job_id
     from run_orchestrator import RunOrchestrator
+    from candidate_profile import enrich_candidate_profiles
+    from candidate_positions import enrich_candidate_positions
 
     # 新设计：encrypt_job_id 必传。兼容模式仍可用，但不推荐静默回退。
     encrypt_job_id = resolve_encrypt_job_id(args.encrypt_job_id)
@@ -415,6 +484,8 @@ def main():
         raise SystemExit(27)
 
     data = json.load(open(args.input, encoding="utf-8"))
+    enrich_candidate_profiles(data.get("candidates", []), out.process_dir)
+    enrich_candidate_positions(data.get("candidates", []), out.process_dir, encrypt_job_id, run_id)
     html = render(data)
 
     Path(args.output).write_text(html, encoding="utf-8")

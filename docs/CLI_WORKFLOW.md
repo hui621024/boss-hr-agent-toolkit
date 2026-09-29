@@ -9,29 +9,29 @@
 
 | 命令 | 作用 | 何时调 |
 |---|---|---|
-| `boss-hr start` | 创建新 run，停在人工确认门（v1.1.2 自动启动 Edge + 等登录） | 用户说"开始一个筛选任务" |
+| `boss-hr start` | 创建新 run，停在人工确认门（v1.1.3 自动启动 Edge；默认不阻塞等登录） | 用户说"开始一个筛选任务" |
 | `boss-hr confirm` | `confirmed` 翻 true；**不**入 `steps_done`（不依赖浏览器） | 用户回复"继续"后第一件事 |
-| `boss-hr fetch --count N` | 拉推荐列表 + 下载 N 份简历（v1.1.2 自动启动 Edge） | confirm 后 |
+| `boss-hr fetch --count N` | 拉推荐列表 + 下载 N 份在线简历（自动启动 Edge） | confirm 后 |
 | `boss-hr score` | 评分协调（一次返回 1 位候选人；不依赖浏览器） | fetch 后循环到 `scoring_complete` |
 | `boss-hr report` | 生成 HTML 报告（不依赖浏览器） | `scoring_complete` 后 |
-| `boss-hr greet` | 给 ≥70 分候选人打招呼（v1.1.2 自动启动 Edge；需用户明确批准） | 用户明确要求时 |
+| `boss-hr greet` | 给 ≥70 分候选人打招呼（自动启动 Edge；需用户明确批准） | 用户明确要求时 |
 | `boss-hr doctor` | **诊断工具**（环境检查 + 可选启动专用 Edge）；**不是** start 的必经前置 | 仅在自动启动失败时排查 |
 | `boss-hr status` | 读 `runs/<run_id>/run.json` + process 目录（不依赖浏览器） | 任何时候想看当前 run 状态 |
 
-### v1.1.2 浏览器自动恢复
+### v1.1.3 浏览器自动恢复
 
-start / fetch / greet **共用** `boss_hr/adapters/browser_environment.ensure_browser_ready`：
+start / fetch / greet **共用** `boss_hr/adapters/browser_environment.ensure_browser_ready`，都会检查 9222 端口、自动启动专用 Edge，并检查 BOSS 登录态：
 
 1. 检查 9222 端口；未监听 → 自动启动**专用** Edge
    （`--user-data-dir=%LOCALAPPDATA%\boss-hr-edge-profile` + `--remote-debugging-port=9222`，
    **不**污染用户日常 Edge profile）。
 2. 连接 CDP，检查 BOSS 登录态（`zp_at` / `wt2` / `bst` cookie）。
 3. 已登录 → 继续执行业务。
-4. 未登录 → 自动打开 BOSS 招聘者登录页，轮询等待（默认 20 秒）。
-5. 超时仍未登录 → 返回 `status=waiting_user_login`（**不是错误**），
-   `next_action=retry_same_command`，**不创建 run**。
-6. 智能体停下，告诉用户"已在专用 Edge 中打开登录页，请登录后回复“好了”
-   重试同一条 start"。
+
+未登录时，各命令的行为不同：
+
+- `start` 默认不在 CLI 内阻塞扫码。它打开登录页后返回 `ok=true`、`status=waiting_user_login`、`next_action=scan_login_then_repeat_start`，并且不创建 run。登录后重试同一条 `start`。
+- `fetch` / `greet` 沿用最多约 20 秒的登录轮询；超时返回登录错误和 `next_action=login_then_retry`。登录后重试原命令，不会在未登录状态继续业务。
 
 `confirm` / `score` / `report` / `status` 不依赖浏览器，**绝不**触发
 Edge 自动启动。
@@ -43,18 +43,16 @@ Edge 自动启动。
 调试可选：
 
 - `--no-auto-launch`：缺 CDP 时直接返回 `CDP_NOT_RUNNING`，跳过自动启动。
-- `--login-wait-seconds N`：调整等待登录秒数（默认 20）。
+- `--login-wait-seconds N`：人工调试兼容选项。默认 0（立即返回登录提示）；大于 0 时最多阻塞等待 N 秒。
 
 ## 2. 完整流程图
 
 ```
    ┌─────────────────────────────────────────────────────────────┐
    │ 1. boss-hr start <query> --job-name ... --encrypt-job-id ... │
-   │    ├─ 9222 未开 → 自动启动专用 Edge（v1.1.2）              │
-   │    ├─ 未登录    → 打开 BOSS 登录页 + 轮询 20s              │
-   │    │            ├─ 登录成功 → 继续业务                       │
-   │    │            └─ 超时     → status=waiting_user_login     │
-   │    │                          next_action=retry_same_command│
+   │    ├─ 9222 未开 → 自动启动专用 Edge（v1.1.3）              │
+   │    ├─ 未登录    → 打开 BOSS 登录页并立即返回               │
+   │    │                          status=waiting_user_login     │
    │    │                          （不创建 run）                │
    │    └─ 一切就绪 → status: waiting_user_confirmation          │
    │                  → 返回 run_id                              │
@@ -73,11 +71,10 @@ Edge 自动启动。
                               ↓
    ┌─────────────────────────────────────────────────────────────┐
    │ 3. boss-hr score    --run-id <RID>  (LLM 循环；不依赖浏览器)│
-   │    第一次: status=waiting_llm                                │
-   │      → 智能体读 input_file，按 resume-screener/SKILL.md 评 │
-   │        4 维度（exp/skill/proj/major），写 output_file         │
-   │      → 再调一次完全相同的 score                              │
-   │    第二次: status=scoring_complete                          │
+   │    status=waiting_llm → 智能体读取一位候选人的 input_file   │
+   │      → 评 4 维度（exp/skill/proj/major），写 output_file     │
+   │      → 重调相同 score，逐位循环                              │
+   │    全部候选人完成后: status=scoring_complete                │
    └─────────────────────────────────────────────────────────────┘
                               ↓
    ┌─────────────────────────────────────────────────────────────┐
@@ -89,7 +86,7 @@ Edge 自动启动。
               ┌───────────────────────────────────┐
               │ 5. boss-hr greet  （可选 + 危险） │
               │    仅在用户明确批准时执行          │
-              │    v1.1.2 自动启动 Edge           │
+              │    自动启动或复用专用 Edge         │
               │    ≥70 分候选人 ≥1 时会真实点击    │
               │    0 候选人时安全跳过（no_candidates）│
               └───────────────────────────────────┘

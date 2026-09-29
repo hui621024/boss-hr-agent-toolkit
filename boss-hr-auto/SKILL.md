@@ -191,7 +191,7 @@ LLM 循环：
 
 **单候选人约束**：每次 `score` 只处理一位候选人。LLM 不循环写多位。
 
-**评分不改**：`total` 由 5 维度 weighted（edu 25% / exp 25% / skill 25% /
+**评分不改**：`total` 由 5 维度 weighted（edu 15% / exp 35% / skill 25% /
 proj 15% / major 10%）算；tier ≥70 推荐 / 60-69 待定 / <60 不推荐。
 edu 由 `score_resumes` 用 `school_tier` 强制覆盖，不接受 LLM 赋值。
 

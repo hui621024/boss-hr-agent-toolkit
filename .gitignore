@@ -23,6 +23,7 @@ chrome-profiles/
 # Resume data (private)
 WorkBuddy/
 boss-resumes/
+boss-hr-output/
 *.json.bak
 
 # Refactor intermediate artifacts (machine-generated; regenerate via tools/refactor_audit.py)

@@ -181,6 +181,28 @@ def test_report_happy_path(workspace):
     assert report_file.endswith(f"{target}_screening_report.html")
 
 
+def test_report_adds_profile_from_current_run(workspace):
+    tmp_path, eid, job_name, target, _other, _empty = workspace
+    process_dir = tmp_path / eid / "runs" / target / "process"
+    (process_dir / "new_resumes.json").write_text(json.dumps([
+        {"name": "张三", "age": "29岁", "degree": "硕士", "work_years": "6年",
+         "_meta": {"encrypt_geek_id": "gid_zhang"}},
+        {"name": "王五", "age": "", "degree": "本科", "work_years": "1年",
+         "_meta": {"encrypt_geek_id": "gid_wang"}},
+    ], ensure_ascii=False), encoding="utf-8")
+
+    proc = _run_cli("report", "--job-name", job_name,
+                    "--encrypt-job-id", eid, "--run-id", target,
+                    env_extra={"BOSS_HR_OUTPUT_DIR": str(tmp_path)})
+    assert proc.returncode == 0, _decode(proc.stderr)
+    report_file = json.loads(_decode(proc.stdout))["data"]["report_file"]
+    html = Path(report_file).read_text(encoding="utf-8")
+    assert "<th>年龄</th><th>学历</th><th>工作经验</th>" in html
+    assert "<td>29岁</td><td>硕士</td><td>6年</td>" in html
+    assert "年龄：29岁" in html and "学历：硕士" in html
+    assert "<td>未提供</td><td>本科</td><td>1年</td>" in html
+
+
 # ============================================================
 # 2. run 不存在
 # ============================================================

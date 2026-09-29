@@ -48,6 +48,7 @@ def fake_run(tmp_path):
     (process_dir / "new_resumes.json").write_text(json.dumps([
         {
             "name": "测试 A",
+            "age": "28岁", "degree": "本科", "work_years": "4年",
             "_meta": {"encrypt_geek_id": "gid_A_abc", "encrypt_job_id": encrypt_job_id},
         },
         {
@@ -101,17 +102,17 @@ def test_calc_weighted_known_input():
     """SKILL.md 示例 A:edu=62, exp=80, skill=65, proj=60, major=100"""
     dims = {"edu": 62, "exp": 80, "skill": 65, "proj": 60, "major": 100}
     weighted = sr.calc_weighted(dims)
-    assert weighted["edu"] == 15.5
-    assert weighted["exp"] == 20.0
+    assert weighted["edu"] == 9.3
+    assert weighted["exp"] == 28.0
     assert weighted["skill"] == 16.25
     assert weighted["proj"] == 9.0
     assert weighted["major"] == 10.0
 
 
 def test_calc_total_known_input():
-    weighted = {"edu": 15.5, "exp": 20.0, "skill": 16.25, "proj": 9.0, "major": 10.0}
-    # 15.5+20.0+16.25+9.0+10.0 = 70.75, round(_, 1) = 70.8
-    assert sr.calc_total(weighted) == 70.8
+    weighted = {"edu": 9.3, "exp": 28.0, "skill": 16.25, "proj": 9.0, "major": 10.0}
+    # 9.3+28.0+16.25+9.0+10.0 = 72.55，沿用Python round一位小数。
+    assert sr.calc_total(weighted) == 72.5
 
 
 def test_calc_total_all_zero():
@@ -179,6 +180,23 @@ def test_validate_score_school_outside_table_marks_missing():
     assert "缺失" in out["dims_edu_reason"]
 
 
+@pytest.mark.parametrize("school, expected_score, evidence", [
+    ("康奈尔大学/健康信息学/硕士", 100, "QS 2027并列16"),
+    ("澳门大学/人工智能/硕士在读", 85, "QS 2027第267"),
+    ("DIPLOMA Fachhochschule Nordhessen Deutschland/计算机/本科", 53, "无限期国家认可"),
+])
+def test_validate_score_uses_overseas_ranked_school_table(school, expected_score, evidence):
+    score = {
+        "name": "海外院校候选人",
+        "school": school,
+        "dims": {"edu": 0, "exp": 70, "skill": 70, "proj": 70, "major": 80},
+    }
+    out = sr.validate_score(score)
+    assert out["dims"]["edu"] == expected_score
+    assert evidence in out["dims_edu_reason"]
+    assert out["school_tier_info"]["scope"] == "overseas"
+
+
 def test_dedup_duplicate_name_not_falsely_skipped():
     """重名候选人（BOSS 的"杨先生""吕女士"匿名昵称）不能被误杀。
 
@@ -244,8 +262,8 @@ def test_validate_score_recomputes_total_and_tier():
         "dims": {"edu": 62, "exp": 80, "skill": 65, "proj": 60, "major": 100},
     }
     out = sr.validate_score(score)
-    # 15.5 + 20 + 16.25 + 9 + 10 = 70.75 → round 70.8
-    assert out["total"] == 70.8
+    # 新权重15/35/25/15/10，原始维度分保持不变。
+    assert out["total"] == 72.5
     assert out["tier"] == "推荐"
     assert set(out["weighted"].keys()) == {"edu", "exp", "skill", "proj", "major"}
 
@@ -386,6 +404,10 @@ def test_main_cli_end_to_end(tmp_path, fake_run):
     # 两个人应该都被排进某个 tier
     for c in result["candidates"]:
         assert c["tier"] in {"推荐", "待定", "不推荐"}
+    by_id = {c["geek_id"]: c for c in result["candidates"]}
+    assert by_id["gid_A_abc"]["age"] == "28岁"
+    assert by_id["gid_A_abc"]["degree"] == "本科"
+    assert by_id["gid_A_abc"]["work_years"] == "4年"
     # actions 三段式必须存在
     assert set(result["actions"].keys()) == {"recommend", "pending", "reject"}
 

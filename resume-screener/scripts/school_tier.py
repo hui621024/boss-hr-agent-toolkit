@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""学校档次查询（基于 resume-screener/SKILL.md 学历分档表）
+"""院校档次查询（国内分档 + 热门海外院校排名快照）。
 
 设计原则：
   1. 不评分：只查基础事实（学校 → 档次 → 分数）
   2. LLM 用此查表后基于 SKILL.md 表综合评分
-  3. 缺失学校返回 None，让 LLM 决定
+  3. 海外院校只使用明确白名单和别名，避免英文泛词误命中
+  4. 缺失学校返回 None，由评分收尾逻辑标记人工复核
 
 分数依据（SKILL.md 第 92 行）：
   - C9: 100（清华/北大等 9 所）
@@ -19,7 +20,10 @@ import json
 import sys
 import io
 import re
+import unicodedata
 from pathlib import Path
+
+from overseas_school_data import OVERSEAS_SCHOOLS
 
 if sys.platform == "win32":
     # 防止外层脚本已 wrap 时被二次 wrap（导致 stdout 被关闭）
@@ -44,7 +48,7 @@ SCHOOL_TIER = {
         "东北大学", "吉林大学", "同济大学", "华东师范大学", "东南大学",
         "厦门大学", "山东大学", "中国海洋大学", "武汉大学", "华中科技大学",
         "中南大学", "中山大学", "华南理工大学", "四川大学", "重庆大学",
-        "电子科技大学", "西北工业大学", "西北农林科技大学", "长安大学",
+        "电子科技大学", "西北工业大学", "西北农林科技大学", "湖南大学",
         "兰州大学", "国防科技大学",
     ],
     # ===== 211 (85) - 非 985 的 211 =====
@@ -54,10 +58,10 @@ SCHOOL_TIER = {
         "东华大学", "上海大学", "暨南大学", "华南师范大学", "南京理工大学",
         "南京航空航天大学", "河海大学", "江南大学", "中国矿业大学", "中国药科大学",
         "南京师范大学", "南京农业大学", "苏州大学", "合肥工业大学", "安徽大学",
-        "福州大学", "南昌大学", "湖南大学", "湖南师范大学", "华中农业大学",
+        "福州大学", "南昌大学", "湖南师范大学", "华中农业大学",
         "华中师范大学", "中南财经政法大学", "武汉理工大学", "中国地质大学",
         "广西大学", "海南大学", "西南交通大学", "西南财经大学", "四川农业大学",
-        "电子科技大学", "西北大学", "陕西师范大学", "西安电子科技大学",
+        "西北大学", "陕西师范大学", "西安电子科技大学",
         "长安大学", "青海大学", "宁夏大学", "新疆大学", "石河子大学",
         "北京交通大学", "北京科技大学", "北京化工大学", "北京邮电大学",
         "北京林业大学", "北京中医药大学", "中国传媒大学", "中央财经大学",
@@ -81,7 +85,7 @@ SCHOOL_TIER = {
         "深圳大学", "广东工业大学", "成都理工大学", "成都中医药大学",
         "西华大学", "四川师范大学", "重庆邮电大学", "重庆交通大学",
         "西安建筑科技大学", "西安理工大学", "西安石油大学", "西安工程大学",
-        "兰州交通大学", "兰州理工大学", "石河子大学", "北方工业大学",
+        "兰州交通大学", "兰州理工大学", "北方工业大学",
         "首都经济贸易大学", "北京语言大学", "中国劳动关系学院", "北京建筑大学",
         "天津师范大学", "天津工业大学", "天津理工大学", "河北大学",
         "燕山大学", "河北师范大学", "华北理工大学", "山西大学", "中北大学",
@@ -94,7 +98,7 @@ SCHOOL_TIER = {
         "南京工业大学", "南京医科大学", "南京中医药大学", "南京财经大学",
         "南京林业大学", "南京审计大学", "南京工程学院", "南京艺术学院",
         "江苏大学", "扬州大学", "南通大学", "常州大学", "江苏科技大学",
-        "南京师范大学", "江苏师范大学",
+        "江苏师范大学",
         "徐州医科大学", "徐州工程学院", "淮阴师范学院",
         "淮阴工学院", "盐城工学院", "常熟理工学院", "浙江工业大学",
         "浙江工商大学", "浙江财经大学", "浙江理工大学", "浙江农林大学",
@@ -273,8 +277,94 @@ def _build_index():
 INDEX = _build_index()
 
 
+TIER_NAME = {
+    100: "C9", 92: "985", 85: "211", 77: "双一流", 71: "一本公办",
+    62: "二本公办", 53: "民办/独立学院",
+}
+
+
+def _normalize_overseas_alias(value: str) -> str:
+    """海外别名归一化；仅供完整字段精确匹配，不做子串猜测。"""
+    text = unicodedata.normalize("NFKC", value or "").casefold().strip()
+    return re.sub(
+        r"[\s·•,，.。;；:：'\"“”‘’`´()（）\[\]【】{}<>《》_/\\\-–—]+",
+        "",
+        text,
+    )
+
+
+def _build_overseas_alias_index():
+    idx = {}
+    for record in OVERSEAS_SCHOOLS:
+        for alias in (record["canonical"], *record.get("aliases", ())):
+            key = _normalize_overseas_alias(alias)
+            if not key:
+                raise ValueError(f"海外院校存在空别名：{record['canonical']}")
+            previous = idx.get(key)
+            if previous and previous["canonical"] != record["canonical"]:
+                raise ValueError(
+                    f"海外院校归一化别名冲突：{alias!r} 同时指向 "
+                    f"{previous['canonical']} / {record['canonical']}"
+                )
+            idx[key] = record
+    return idx
+
+
+OVERSEAS_ALIAS_INDEX = _build_overseas_alias_index()
+
+
+def _unknown_result(school_name: str) -> dict:
+    return {
+        "school": school_name,
+        "tier": "未知",
+        "score": None,
+        "matched": None,
+        "fuzzy": False,
+        "scope": "unknown",
+        "basis": "未收录于国内分档或热门海外院校内置表",
+        "rankings": {},
+        "popular": False,
+        "region": None,
+    }
+
+
+def _domestic_result(school_name: str, matched: str, score: int, fuzzy: bool) -> dict:
+    tier = TIER_NAME[score]
+    return {
+        "school": school_name,
+        "tier": tier,
+        "score": score,
+        "matched": matched,
+        "fuzzy": fuzzy,
+        "scope": "domestic",
+        "basis": f"项目内置国内院校分档表：{tier}={score}分",
+        "rankings": {},
+        "popular": True,
+        "region": "中国内地",
+    }
+
+
+def _overseas_result(school_name: str, record: dict) -> dict:
+    canonical = record["canonical"]
+    return {
+        "school": school_name,
+        "tier": record["tier"],
+        "score": record["score"],
+        "matched": canonical,
+        "fuzzy": _normalize_overseas_alias(school_name) != _normalize_overseas_alias(canonical),
+        "scope": "overseas",
+        "basis": record["basis"],
+        "rankings": record.get("rankings", {}),
+        "popular": bool(record.get("popular", True)),
+        "region": record.get("region"),
+    }
+
+
 def lookup(school_name: str) -> dict:
-    """查学校档次
+    """查学校档次。
+
+    国内院校保留历史的最长优先中文模糊匹配；海外院校仅对内置的完整
+    canonical/aliases 做归一化精确匹配，禁止用英文通用词做子串匹配。
 
     Returns:
         {
@@ -282,24 +372,28 @@ def lookup(school_name: str) -> dict:
           "tier": str,          # "C9/985/211/双一流/一本公办/二本公办/民办"
           "score": int,         # SKILL.md 表的分数
           "matched": str,       # 实际匹配的校名（如果有）
-          "fuzzy": bool         # 是否模糊匹配
+          "fuzzy": bool,        # 是否通过别名或国内模糊规则命中
+          "scope": str,         # domestic / overseas / unknown
+          "basis": str,         # 可写入报告的分档依据
+          "rankings": dict,     # 海外官方排名快照；国内为空
+          "popular": bool,      # 是否在热门海外院校示例中公开展示
+          "region": str | None
         }
     """
     # 空串 / 纯空白：直接返回未知，避免 "" in k 恒真导致的虚假匹配
     if not school_name or not school_name.strip():
-        return {"school": school_name, "tier": "未知", "score": None,
-                "matched": None, "fuzzy": False}
+        return _unknown_result(school_name)
     school_name = school_name.strip()
 
-    tier_name = {
-        100: "C9", 92: "985", 85: "211", 77: "双一流", 71: "一本公办",
-        62: "二本公办", 53: "民办/独立学院",
-    }
+    # 海外及港澳：完整别名归一化后精确命中，不做危险子串匹配。
+    overseas = OVERSEAS_ALIAS_INDEX.get(_normalize_overseas_alias(school_name))
+    if overseas:
+        return _overseas_result(school_name, overseas)
+
     # 精确匹配
     if school_name in INDEX:
         s = INDEX[school_name]
-        return {"school": school_name, "tier": tier_name[s], "score": s,
-                "matched": school_name, "fuzzy": False}
+        return _domestic_result(school_name, school_name, s, False)
     # 模糊匹配：优先最长（最具体）匹配，避免独立学院/民办学院被较短的
     # 母校本部校名"截胡"（如「杭州电子科技大学信息工程学院」误匹配到
     # 「杭州电子科技大学」一本公办，导致分数虚高）
@@ -310,15 +404,18 @@ def lookup(school_name: str) -> dict:
                 best = (k, v)
     if best:
         k, v = best
-        return {"school": school_name, "tier": tier_name[v], "score": v,
-                "matched": k, "fuzzy": True}
-    return {"school": school_name, "tier": "未知", "score": None,
-            "matched": None, "fuzzy": False}
+        return _domestic_result(school_name, k, v, True)
+    return _unknown_result(school_name)
 
 
 def batch_lookup(schools: list) -> list:
     """批量查"""
     return [lookup(s) for s in schools]
+
+
+def popular_overseas_schools() -> list:
+    """返回适合公开展示的热门海外院校快照，不包含内部精确例外条目。"""
+    return [dict(item) for item in OVERSEAS_SCHOOLS if item.get("popular", True)]
 
 
 if __name__ == "__main__":

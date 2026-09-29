@@ -46,6 +46,7 @@ def _build_launch_edge_command(edge_path: str, profile_dir: str) -> list[str]:
         edge_path,
         f"--user-data-dir={profile_dir}",
         f"--remote-debugging-port={CDP_PORT}",
+        "--restore-last-session",
         f"--remote-allow-origins=*",
         "--no-first-run",
         "--no-default-browser-check",

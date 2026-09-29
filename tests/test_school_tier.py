@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(_SCRIPTS))
 
 import pytest  # noqa: E402
 
-from school_tier import lookup, batch_lookup  # noqa: E402
+from school_tier import lookup, batch_lookup, popular_overseas_schools  # noqa: E402
 
 
 # ============================================================
@@ -124,7 +124,10 @@ def test_lookup_fuzzy_jiangsu_normal_university_not_misrouted():
 
 def test_lookup_return_schema():
     r = lookup("清华大学")
-    assert set(r.keys()) == {"school", "tier", "score", "matched", "fuzzy"}
+    assert set(r.keys()) == {
+        "school", "tier", "score", "matched", "fuzzy", "scope", "basis",
+        "rankings", "popular", "region",
+    }
 
 
 def test_batch_lookup_returns_list_in_order():
@@ -132,3 +135,68 @@ def test_batch_lookup_returns_list_in_order():
     results = batch_lookup(schools)
     assert len(results) == 3
     assert [r["score"] for r in results] == [100, 85, None]
+
+
+# ============================================================
+# 6. 海外热门院校：明确别名 + 官方排名依据
+# ============================================================
+
+@pytest.mark.parametrize("school, expected_score, expected_matched", [
+    ("康奈尔大学", 100, "Cornell University"),
+    ("cornell university", 100, "Cornell University"),
+    ("澳门大学", 85, "University of Macau"),
+    ("Universidade de Macau", 85, "University of Macau"),
+    ("澳门科技大学", 77, "Macau University of Science and Technology"),
+    ("DIPLOMA Fachhochschule Nordhessen Deutschland", 53, "DIPLOMA Hochschule"),
+])
+def test_lookup_overseas_aliases(school, expected_score, expected_matched):
+    r = lookup(school)
+    assert r["score"] == expected_score
+    assert r["matched"] == expected_matched
+    assert r["scope"] == "overseas"
+    assert r["basis"]
+
+
+def test_lookup_overseas_normalizes_width_case_spaces_and_punctuation():
+    a = lookup("  CORNELL   UNIVERSITY  ")
+    b = lookup("University of California，Berkeley")
+    assert a["score"] == 100
+    assert b["score"] == 100
+
+
+@pytest.mark.parametrize("unsafe", [
+    "UM", "University", "大学", "Cornell College", "DIPLOMA",
+])
+def test_lookup_does_not_guess_unsafe_short_or_similar_names(unsafe):
+    r = lookup(unsafe)
+    assert r["score"] is None
+    assert r["scope"] == "unknown"
+
+
+def test_diploma_is_internal_exact_entry_not_public_popular_school():
+    r = lookup("DIPLOMA Hochschule")
+    assert r["score"] == 53
+    assert r["popular"] is False
+    assert all(s["canonical"] != "DIPLOMA Hochschule" for s in popular_overseas_schools())
+
+
+def test_popular_overseas_table_contains_current_ranked_examples():
+    names = {s["canonical"] for s in popular_overseas_schools()}
+    assert "Cornell University" in names
+    assert "University of Macau" in names
+    assert len(names) >= 90
+
+
+# ============================================================
+# 7. 国内基准项纠正：海外对标所依赖的档位不能静默降档
+# ============================================================
+
+@pytest.mark.parametrize("school, expected_score", [
+    ("湖南大学", 92),
+    ("电子科技大学", 92),
+    ("长安大学", 85),
+    ("南京师范大学", 85),
+    ("石河子大学", 85),
+])
+def test_domestic_reference_tiers_are_not_overwritten(school, expected_score):
+    assert lookup(school)["score"] == expected_score
